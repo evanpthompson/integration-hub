@@ -58,7 +58,7 @@ Explicitly out of scope for v1, listed so they don't creep back in:
 | Multi-tenancy / orgs / RBAC | Single-user system — one identity, no roles. OIDC *authentication* on the API is in scope (PLAN Phase 3, task 3.10); per-user *authorization* is not. |
 | Inbound webhooks | Not in v1 — but no longer a permanent non-goal. See `PLAN.md`, "Direction changes". |
 | Scheduled polling / cron sync | On-demand invoke is enough to demo and measure. |
-| A custom web UI | Scalar (API docs) + Grafana (metrics/traces) cover "visual" for free. |
+| A custom web UI *for observability* | Scalar (API docs) + Grafana (metrics/traces) cover that for free. **Amended:** the reasoning holds for observing the system and does not hold for *authoring* an integration — see §11.2. |
 | Streaming / large-result pagination beyond a page cap | Note the ceiling, don't build it. |
 | preprod / prod overlays | Dev cluster only. |
 | Secret rotation, audit log, approval workflow | Enterprise theater. Say it in the interview, don't build it. |
@@ -361,6 +361,39 @@ pass-through, and re-encoding arbitrary JSON through protobuf's value model buys
 `ponytail:` no streaming — the worker caps at one upstream page and returns it whole. Add
 server streaming when a real integration needs more than that.
 
+### 4.1.1 Every service describes itself: `GET /_describe`
+
+A convention, adopted now because it is nearly free now and expensive to retrofit.
+
+**Every service in this system exposes a machine-readable description of what it
+offers.** The synthetic service already does (`/v1/_describe`): its endpoints, its
+dataset size, and the fault headers it honours.
+
+Shape is deliberately loose — a JSON object with at minimum:
+
+```json
+{
+  "service": "orchestrator",
+  "version": "0.1.0",
+  "protocols": ["rest", "graphql", "grpc-client"],
+  "capabilities": [ /* service-specific; integrations, resources, tools, … */ ],
+  "contracts": ["integrationhub.worker.v1"],
+  "schemas": ["/schemas/integration.schema.json"]
+}
+```
+
+Why it matters more than it looks: today discoverability is `ls` — one repo, three
+services. The move to separate repos and separate charts deletes that, and nothing
+will be able to answer *"what exists and what can it do."* A service catalog
+(see `PLAN.md`) then becomes a thin aggregator over endpoints that already exist,
+rather than a project.
+
+The rule that decides whether such a catalog is useful or garbage: **it must be
+generated, never maintained.** A hand-written catalog is wrong within a month, and a
+wrong catalog is worse than none because people stop trusting it. `/_describe` must
+therefore be derived from what the service actually loaded at runtime — the registry,
+the proto, the schema — never from a constant someone has to remember to update.
+
 ### 4.2 Orchestrator REST — writes and invocation
 
 | Method | Path | Purpose |
@@ -642,6 +675,51 @@ model; the manifest is the policy boundary.
 
 Estimated at about a day on top of Phase 2, since the parameter metadata and the
 invoke path both already exist. Not scheduled — see `PLAN.md`.
+
+### 11.2 The authoring UI — the other frontend over the same pipeline
+
+The agent is how a *model* adds an integration. A form is how a *person* does. They
+produce the identical artifact, and they should drive the identical backend:
+**probe → draft → validate → apply.** The agent's tool surface (§11) and the form are
+two drivers of one pipeline, which is what keeps the UI thin and stops the two paths
+from drifting into different validation rules.
+
+This is also the most literal part of the rebuild: the system this project is modelled
+on used a Flutter intake survey that emitted a YAML manifest. This is that tool.
+
+Three phases, each independently useful and each shippable alone:
+
+**A — Schema-driven form (~1 day).** Point `react-jsonschema-form` at
+`schemas/integration.schema.json` and render it. No hand-built fields, so it cannot
+drift from the schema. Generic-looking, but it works, and it makes the thesis visible:
+*a form generated from the schema is itself the argument that an integration is only
+configuration.* Add a live YAML preview beside the form and the point lands without
+narration.
+
+**B — Guided wizard (~4–5 days).** The survey experience rather than a config editor:
+*what is the base URL → probe it → here is what came back, choose the fields you want
+→ name them → here is your manifest.* Consumes `probe_api` and
+`POST /integrations/{id}/validate`, both of which exist for the agent anyway, so most
+of the cost is UI rather than backend.
+
+**C — Live transform preview (after the agent).** The JMESPath expression, the probed
+sample payload, and the resulting canonical records side by side, updating as you
+type — effectively an embedded JMESPath playground. Ordered last because it needs
+`probe_api` to have something to preview against.
+
+C is the one worth building for a reason beyond polish: ADR 0001 explicitly admits
+that *"a JMESPath expression is harder to debug than a function — no breakpoints,
+worse error messages."* This is the fix for a weakness the design already conceded,
+and it shares its machinery with transform replay (§8.2).
+
+**Delivery:** a Vite static build served by the orchestrator itself
+(`MapFallbackToFile`). One container, no CORS, no second deployment — do not stand up
+a separate nginx pod for a form.
+
+**Cost to be honest about:** TypeScript is a fourth toolchain alongside C#, Python and
+Go. Justified because it is a browser UI and there is no sane alternative, but it is
+real, and it is why phase A is deliberately a library pointed at an existing schema
+rather than a hand-built application.
 
 Prompting note: `draft_integration` is where the LLM does real work (inferring the JMESPath
 transform from a probed shape). Its system prompt, the manifest JSON Schema, and two

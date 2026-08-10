@@ -284,6 +284,52 @@ breath, then use it in the next.
 Depends on Phase 2 (the MCP server exists) and reads better with credentials done, so
 a governed-access claim is actually true.
 
+### Candidate: the authoring UI, in three phases
+
+The agent is how a model adds an integration; a form is how a person does. Same
+artifact, same pipeline — full design in [`SPEC.md` §11.2](SPEC.md). This is also the
+most literal part of the rebuild: the original system's intake survey emitted a YAML
+manifest, and this is that tool.
+
+| Phase | What | Size | Order |
+|---|---|---|---|
+| **A** | Schema-driven form — `react-jsonschema-form` pointed at the published schema, plus a live YAML preview | ~1 day | Any time. Cannot drift from the schema, and makes the thesis visible without narration. |
+| **B** | Guided wizard — base URL → probe → pick fields → name them → manifest | ~4–5 days | After Phase 2; consumes `probe_api` and `validate`, which exist for the agent anyway. |
+| **C** | Live transform preview — expression, sample payload and resulting records side by side | ~2 days | After the agent. Needs `probe_api` to have something to preview. |
+
+C is worth more than polish: ADR 0001 concedes that a JMESPath expression is harder to
+debug than a function, and this is the fix for that admitted weakness. It shares
+machinery with transform replay (SPEC §8.2), so building either makes the other cheaper.
+
+Served as a static build from the orchestrator (`MapFallbackToFile`) — one container,
+no CORS, no second deployment. Cost to be honest about: TypeScript is a fourth
+toolchain, which is exactly why phase A is a library pointed at an existing schema
+rather than a hand-built app.
+
+### Candidate: a discovery / catalog service
+
+**Trigger: the repo split.** Not a date — the split is the event that destroys
+discoverability, because today it is `ls` over one repo.
+
+A separate service answering *"what exists, what does it speak, what can it do"* by
+aggregating `/_describe` from every service ([ADR 0008](adr/0008-every-service-describes-itself.md),
+convention adopted now). Deliberately separate rather than an orchestrator endpoint,
+for the same reason the proto is: the thing describing all the parties should not be
+one of the parties, and it should still answer while the orchestrator is down.
+
+Two hard rules, both from ADR 0008:
+
+- **Generated, never maintained.** It stores nothing authoritative, so it has nothing
+  of its own to be wrong about. A hand-maintained catalog is wrong within a month and
+  is then worse than none.
+- **Aggregates only existing sources of truth** — manifests, protos, schemas, charts,
+  live health.
+
+The payoff is that it generalises the MCP projection rather than competing with it:
+one endpoint an agent introspects to learn every integration, parameter, contract and
+health state. Backstage does this for humans; agent-first is the part almost nobody
+has done. **The catalog is the MCP server** is the coherent version of both ideas.
+
 ### Correctness and operability gaps found in review
 
 Surfaced while walking the architecture. Ordered by what breaks if ignored.
