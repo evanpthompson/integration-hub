@@ -1,0 +1,43 @@
+image:
+  repository: registry.gitlab.com/navetoocool/synthetic
+  tag: ""            # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+# Each protocol adapter is independently switchable, so a namespace can run a
+# REST-only fixture without a gRPC listener sitting idle.
+adapters:
+  rest: true
+  graphql: true
+  grpc: true
+
+dataset:
+  # Same seed, same bytes, every pod on every machine. Changing this changes every
+  # assertion that depends on the data — treat it as an interface, not a knob.
+  seed: 42
+  orders: 250
+
+service:
+  type: ClusterIP
+  httpPort: 8080
+  grpcPort: 50052
+
+# A test fixture has no business being reachable from outside the cluster.
+ingress:
+  enabled: false
+  className: nginx
+  host: synthetic.dev.consu.local
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    cpu: 250m
+    memory: 128Mi
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

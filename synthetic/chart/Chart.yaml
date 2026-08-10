@@ -1,0 +1,14 @@
+apiVersion: v2
+name: synthetic
+description: Deterministic stand-in upstream (REST, GraphQL, gRPC) for end-to-end testing
+type: application
+
+# appVersion tracks the container tag; version tracks the chart itself. They move
+# independently on purpose — a values-only change should not imply a new binary.
+version: 0.1.0
+appVersion: "0.1.0"
+
+keywords:
+  - testing
+  - mock
+  - fixture

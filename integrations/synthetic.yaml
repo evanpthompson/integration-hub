@@ -1,0 +1,86 @@
+# The synthetic service — a deterministic stand-in upstream (see synthetic/README.md).
+#
+# This manifest is what makes the e2e suite independent of the public internet:
+# same seed, same data, same assertions, every run. It also carries the fault
+# headers, so a test can arm an upstream failure purely by editing YAML.
+#
+# NOTE: baseUrl is hardcoded to localhost, which is a real gap — manifests have no
+# per-environment overrides yet, so this will need one when the cluster runs a
+# `synthetic` Service. Tracked in docs/PLAN.md.
+apiVersion: integrationhub.dev/v1alpha1
+kind: Integration
+metadata:
+  id: synthetic
+  displayName: Synthetic Test Upstream
+spec:
+  protocol: rest
+  baseUrl: http://localhost:8080
+  auth:
+    type: none
+  defaults:
+    headers:
+      User-Agent: integration-hub
+    timeoutMs: 5000
+  resiliency:
+    retry:
+      maxAttempts: 3
+      backoff: exponential
+      baseDelayMs: 100
+      jitter: true
+  resources:
+    # Paginated collection with nested objects — the workhorse for `emit: list`.
+    - name: orders
+      method: GET
+      path: /v1/orders
+      params:
+        - { name: limit,  in: query, default: "5" }
+        - { name: offset, in: query, default: "0" }
+      emit: list
+      transform: |
+        orders[].{
+          id: id,
+          reference: order_reference,
+          status: fulfillment_status,
+          customer: customer.display_name,
+          tier: customer.account_tier,
+          totalCents: order_total.cents,
+          lineCount: length(line_items),
+          placedAt: placed_at
+        }
+
+    # Single object by path param — also the 404-is-not-retryable case.
+    - name: order
+      method: GET
+      path: /v1/orders/{id}
+      params:
+        - { name: id, in: path, required: true }
+      emit: single
+      transform: |
+        {
+          id: id,
+          reference: order_reference,
+          status: fulfillment_status,
+          totalCents: order_total.cents,
+          lineCount: length(line_items)
+        }
+
+    # Deeply nested single object, shaped like a telemetry payload.
+    - name: snapshot
+      method: GET
+      path: /v1/snapshot
+      params:
+        - { name: station, in: query, default: "KOJC" }
+      emit: single
+      transform: |
+        {
+          id: station_id,
+          tempC: current.temperature_c,
+          humidityPct: current.humidity_pct,
+          windKph: current.wind_speed_kph,
+          elevationM: location.elevation_m,
+          observedAt: current.observed_at
+        }
+
+    # Fault-injecting variants live in synthetic-flaky.yaml, not here: headers are
+    # declared per integration rather than per resource, so arming a fault on one
+    # resource would arm it on all of them.

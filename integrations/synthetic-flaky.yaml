@@ -1,0 +1,42 @@
+# A deliberately unreliable upstream, for retry and circuit-breaker tests.
+#
+# The fault is armed entirely in YAML: spec.defaults.headers are forwarded upstream,
+# and the synthetic service reads X-Synth-* from them. No test code, no admin call —
+# which means the retry assertions read as "this integration fails twice, then
+# succeeds", rather than as a mock setup ritual.
+#
+# Headers are declared per integration, so this is a whole integration rather than a
+# resource on `synthetic`. That is also why it points at the same endpoints.
+apiVersion: integrationhub.dev/v1alpha1
+kind: Integration
+metadata:
+  id: synthetic-flaky
+  displayName: Synthetic Test Upstream (fails twice, then succeeds)
+spec:
+  protocol: rest
+  baseUrl: http://localhost:8080
+  auth:
+    type: none
+  defaults:
+    headers:
+      User-Agent: integration-hub
+      X-Synth-Fail-Times: "2"
+      X-Synth-Status: "503"
+      X-Synth-Key: flaky-integration
+    timeoutMs: 5000
+  resiliency:
+    retry:
+      maxAttempts: 3
+      backoff: exponential
+      baseDelayMs: 100
+      jitter: true
+  resources:
+    # With maxAttempts: 3 this should land on RETRIED_SUCCESS once task 1.6 exists.
+    # Until then it is a reliable way to see a 502 with retryable=true.
+    - name: orders
+      method: GET
+      path: /v1/orders
+      params:
+        - { name: limit, in: query, default: "1" }
+      emit: list
+      transform: "orders[].{ id: id, status: fulfillment_status }"

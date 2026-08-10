@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "synthetic.fullname" . }}
+  labels:
+    {{- include "synthetic.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "synthetic.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "synthetic.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: synthetic
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - -http=:{{ .Values.service.httpPort }}
+            - -grpc-addr=:{{ .Values.service.grpcPort }}
+            - -seed={{ .Values.dataset.seed }}
+            - -orders={{ .Values.dataset.orders }}
+            - -rest={{ .Values.adapters.rest }}
+            - -graphql={{ .Values.adapters.graphql }}
+            - -grpc={{ .Values.adapters.grpc }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.httpPort }}
+            {{- if .Values.adapters.grpc }}
+            - name: grpc
+              containerPort: {{ .Values.service.grpcPort }}
+            {{- end }}
+          # /healthz sits outside the fault middleware on purpose: an armed fault
+          # must not make Kubernetes restart the pod mid-test.
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 1
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -9,6 +9,7 @@ syntax = "proto3";
 package integrationhub.worker.v1;
 
 option csharp_namespace = "IntegrationHub.Worker.V1";
+option go_package = "github.com/evanpthompson/integration-hub/synthetic/workerv1;workerv1";
 
 service Worker {
   rpc Invoke(InvokeRequest) returns (InvokeResponse);
