@@ -220,11 +220,24 @@ Helm is not a fight with the platform — it is where the platform was already g
 The delivery docs describe versioned charts pushed to an OCI registry as the target
 state, with Kustomize as the interim. This accelerates that rather than diverging.
 
-**The real cost is the proto.** `proto/worker.proto` is a contract shared by three
-languages. In a monorepo it is free; across repos it needs a home and a version.
-Unresolved — options are a small contracts repo vendored by copy with a CI drift
-check, a published artifact per language, or a schema registry. Decide before the
-first repo is split, because it determines everyone's build.
+**The proto question is settled** — see [`adr/0007`](adr/0007-shared-proto-vendored-from-a-contracts-repo.md).
+An `integration-hub-contracts` repo is the source of truth; each service vendors a
+copy and a check fails on drift. Every repo keeps building offline with no registry
+and no publish step.
+
+Split order, smallest blast radius first:
+
+| # | Step | Note |
+|---|---|---|
+| 1 | `integration-hub-contracts` — the proto, tagged | Nothing depends on it yet, so it cannot break anything. |
+| 2 | Vendor the copy back into this repo + a drift check in `scripts/e2e.sh` | Proves the mechanism while everything is still one repo. |
+| 3 | Split out `synthetic` with its chart | Already self-contained: own `go.mod`, own Dockerfile, own chart, no imports from this repo. |
+| 4 | Charts for orchestrator and worker; retire the Kustomize plan in task 3.5 | |
+| 5 | The umbrella chart | Whole stack — orchestrator, worker, Postgres, synthetic — in one `helm install` for e2e and demos. |
+
+Step 5 is the one with real payoff: `helm install` bringing up the entire stack is a
+much better demo opening than four terminals, and it makes the e2e suite runnable in
+a cluster rather than only on a laptop.
 
 ### Inbound webhooks
 
