@@ -1,0 +1,47 @@
+# Open-Meteo — the keyless integration.
+#
+# No API key, no signup, generous limits. This is the one that never fails on stage,
+# and it proves the auth: none path.
+apiVersion: integrationhub.dev/v1alpha1
+kind: Integration
+metadata:
+  id: open-meteo
+  displayName: Open-Meteo Forecast
+spec:
+  protocol: rest
+  baseUrl: https://api.open-meteo.com
+  auth:
+    type: none
+  defaults:
+    headers:
+      User-Agent: integration-hub
+    timeoutMs: 5000
+  resiliency:
+    retry:
+      maxAttempts: 3
+      backoff: exponential
+      baseDelayMs: 200
+      jitter: true
+    circuitBreaker:
+      failureRatio: 0.5
+      samplingSeconds: 30
+      breakSeconds: 15
+      minThroughput: 8
+  rateLimit:
+    requestsPerMinute: 60
+  resources:
+    - name: currentWeather
+      method: GET
+      path: /v1/forecast
+      params:
+        - { name: latitude,  in: query, required: true }
+        - { name: longitude, in: query, required: true }
+        - { name: current,   in: query, default: "temperature_2m,wind_speed_10m" }
+      emit: single
+      transform: |
+        {
+          id: join(',', [to_string(latitude), to_string(longitude)]),
+          tempC: current.temperature_2m,
+          windKph: current.wind_speed_10m,
+          observedAt: current.time
+        }

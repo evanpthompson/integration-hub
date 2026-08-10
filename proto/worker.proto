@@ -1,0 +1,66 @@
+// Integration Hub — worker contract.
+//
+// One RPC, deliberately. The orchestrator owns credentials, the retry loop, and run
+// history; the worker owns the upstream call, the transform, and error *classification*.
+// See docs/SPEC.md §4.1 and docs/adr/0003 for why the retry split is where it is.
+
+syntax = "proto3";
+
+package integrationhub.worker.v1;
+
+option csharp_namespace = "IntegrationHub.Worker.V1";
+
+service Worker {
+  rpc Invoke(InvokeRequest) returns (InvokeResponse);
+}
+
+message InvokeRequest {
+  string run_id         = 1;
+  string integration_id = 2;
+  string resource       = 3;
+  Protocol protocol     = 4;
+  string base_url       = 5;
+
+  // REST (protocol = REST)
+  string method                  = 6;  // GET | POST | ...
+  string path                    = 7;  // path params already substituted
+  map<string, string> query      = 8;
+
+  // GraphQL (protocol = GRAPHQL)
+  string graphql_query           = 9;
+  string variables_json          = 10;
+
+  // Resolved auth headers are included here, scoped to this one invocation.
+  // The worker never sees the credential store. Never log this map.
+  map<string, string> headers    = 11;
+
+  string transform               = 12;  // JMESPath, evaluated against the decoded body
+  Emit emit                      = 13;
+  int32 timeout_ms               = 14;
+  int32 attempt                  = 15;  // 1-based; for logs/traces only, not control flow
+}
+
+message InvokeResponse {
+  bool   ok                   = 1;
+  int32  upstream_status      = 2;
+  bytes  records_json         = 3;  // canonical records array, UTF-8 JSON
+  int32  count                = 4;
+  int32  upstream_duration_ms = 5;
+
+  // UPSTREAM_5XX | UPSTREAM_4XX | TIMEOUT | CONNECT | TRANSFORM | GRAPHQL_ERROR | RATE_LIMITED
+  string error_code           = 6;
+  string error_message        = 7;  // must never contain header or credential values
+  bool   retryable            = 8;  // the worker classifies; the orchestrator decides
+}
+
+enum Protocol {
+  PROTOCOL_UNSPECIFIED = 0;
+  REST                 = 1;
+  GRAPHQL              = 2;
+}
+
+enum Emit {
+  EMIT_UNSPECIFIED = 0;
+  SINGLE           = 1;
+  LIST             = 2;
+}

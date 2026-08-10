@@ -1,0 +1,25 @@
+# .NET
+bin/
+obj/
+*.user
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Generated protobuf stubs
+**/*_pb2.py
+**/*_pb2_grpc.py
+**/*_pb2.pyi
+
+# Secrets — nothing credential-shaped is ever committed. See docs/SPEC.md §5.
+.env
+*.pem
+*.key
+credentials/
+
+# macOS
+.DS_Store

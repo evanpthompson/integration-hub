@@ -1,0 +1,67 @@
+# GitHub REST — the credentialed integration.
+#
+# Exercises the auth: bearer path and real rate limits (5,000 req/hr authenticated).
+# The token is referenced by NAME only. See docs/SPEC.md §5.
+apiVersion: integrationhub.dev/v1alpha1
+kind: Integration
+metadata:
+  id: github
+  displayName: GitHub REST API
+spec:
+  protocol: rest
+  baseUrl: https://api.github.com
+  auth:
+    type: bearer
+    credentialRef: github-token
+    headerName: Authorization
+  defaults:
+    headers:
+      Accept: application/vnd.github+json
+      X-GitHub-Api-Version: "2022-11-28"
+      User-Agent: integration-hub
+    timeoutMs: 5000
+  resiliency:
+    retry:
+      maxAttempts: 3
+      backoff: exponential
+      baseDelayMs: 200
+      jitter: true
+    circuitBreaker:
+      failureRatio: 0.5
+      samplingSeconds: 30
+      breakSeconds: 15
+      minThroughput: 8
+  rateLimit:
+    requestsPerMinute: 60
+  resources:
+    - name: repoSummary
+      method: GET
+      path: /repos/{owner}/{repo}
+      params:
+        - { name: owner, in: path, required: true }
+        - { name: repo,  in: path, required: true }
+      emit: single
+      transform: |
+        {
+          id: to_string(id),
+          name: full_name,
+          stars: stargazers_count,
+          openIssues: open_issues_count,
+          updatedAt: pushed_at
+        }
+
+    - name: recentIssues
+      method: GET
+      path: /repos/{owner}/{repo}/issues
+      params:
+        - { name: owner,    in: path,  required: true }
+        - { name: repo,     in: path,  required: true }
+        - { name: per_page, in: query, default: "10" }
+      emit: list
+      transform: |
+        [].{
+          id: to_string(id),
+          title: title,
+          state: state,
+          updatedAt: updated_at
+        }
