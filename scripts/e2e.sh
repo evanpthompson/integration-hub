@@ -53,6 +53,17 @@ sys.exit(0 if ($expr) else 1)
   pass "$label"
 }
 
+# A process left over from manual testing will silently serve these requests and
+# make the teardown assertions lie — "worker down" passes as 200 because a
+# different worker answered. Fail fast instead.
+for port in 5066 "$WORKER_PORT"; do
+  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "port $port is already in use — stop the stray process first:" >&2
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN >&2
+    exit 1
+  fi
+done
+
 echo "==> regenerating protobuf stubs"
 uv run python -m grpc_tools.protoc \
   --proto_path=proto --python_out=worker --grpc_python_out=worker --pyi_out=worker \

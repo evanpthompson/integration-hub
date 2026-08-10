@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../schemas/integration.schema.json
 # The synthetic service — a deterministic stand-in upstream (see synthetic/README.md).
 #
 # This manifest is what makes the e2e suite independent of the public internet:

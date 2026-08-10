@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../schemas/integration.schema.json
 # Open-Meteo — the keyless integration.
 #
 # No API key, no signup, generous limits. This is the one that never fails on stage,

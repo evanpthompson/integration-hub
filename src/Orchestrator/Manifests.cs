@@ -112,6 +112,7 @@ public static class ManifestLoader
     public const string SupportedApiVersion = "integrationhub.dev/v1alpha1";
 
     private static readonly Regex IdPattern = new("^[a-z0-9-]{1,40}$", RegexOptions.Compiled);
+    private static readonly Regex ResourceNamePattern = new("^[A-Za-z][A-Za-z0-9_]{0,63}$", RegexOptions.Compiled);
     private static readonly Regex CredentialRefPattern = new("^[a-z0-9-]{1,60}$", RegexOptions.Compiled);
     private static readonly Regex PathParamPattern = new(@"\{([^}]+)\}", RegexOptions.Compiled);
 
@@ -231,9 +232,13 @@ public static class ManifestLoader
 
     private static void ValidateResource(string id, ResourceSpec r, string protocol)
     {
-        if (string.IsNullOrWhiteSpace(r.Name))
+        // Resource names end up in the invoke URL, so they are constrained here and
+        // in schemas/integration.schema.json. The two must agree.
+        if (!ResourceNamePattern.IsMatch(r.Name ?? ""))
         {
-            throw new ManifestException($"{id}: every resource needs a name");
+            throw new ManifestException(
+                $"{id}: resource name '{r.Name}' must start with a letter and contain " +
+                "only letters, digits and underscores");
         }
 
         var where = $"{id}.{r.Name}";
@@ -269,6 +274,13 @@ public static class ManifestLoader
             if (!names.Add(p.Name))
             {
                 throw new ManifestException($"{where}: duplicate param '{p.Name}'");
+            }
+            // A required param with a default can never actually be required — the
+            // default always satisfies it. Almost always a mistake in the manifest.
+            if (p.Required && p.Default is not null)
+            {
+                throw new ManifestException(
+                    $"{where}.{p.Name}: a param cannot be both required and have a default");
             }
         }
 

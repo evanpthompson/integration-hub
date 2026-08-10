@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://integrationhub.dev/schemas/integration/v1alpha1.json",
+  "title": "Integration Hub manifest",
+  "description": "An integration is configuration, not code. This schema is the structural contract for integrations/*.yaml — consumed by editors (yaml-language-server), by CI, and by the MCP agent when it drafts a new integration. Cross-field rules that JSON Schema cannot express (path placeholders matching declared path params; graphql resources requiring a query) are enforced by the orchestrator's loader, which is also what produces human-readable errors.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "const": "integrationhub.dev/v1alpha1"
+    },
+    "kind": {
+      "const": "Integration"
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]{1,40}$",
+          "description": "Primary key. Lowercase, digits and hyphens."
+        },
+        "displayName": { "type": "string" }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "required": ["baseUrl", "resources"],
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "enum": ["rest", "graphql"],
+          "default": "rest"
+        },
+        "baseUrl": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https?://",
+          "description": "Absolute http(s) URL."
+        },
+        "auth": { "$ref": "#/$defs/auth" },
+        "defaults": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "headers": {
+              "type": "object",
+              "additionalProperties": { "type": "string" },
+              "description": "Sent on every request for this integration. Never put a credential here — reference one with auth.credentialRef."
+            },
+            "timeoutMs": { "type": "integer", "minimum": 1, "default": 5000 }
+          }
+        },
+        "resiliency": { "$ref": "#/$defs/resiliency" },
+        "rateLimit": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "requestsPerMinute": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "resources": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/resource" }
+        }
+      }
+    }
+  },
+
+  "$defs": {
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": ["none", "bearer", "headerKey", "queryKey"],
+          "default": "none"
+        },
+        "credentialRef": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]{1,60}$",
+          "description": "The NAME of a credential, never the credential itself. Real tokens are long and mixed-case, so this pattern rejects a secret pasted where its reference belongs."
+        },
+        "headerName": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "none" } }, "required": ["type"] },
+          "then": {
+            "not": { "required": ["credentialRef"] },
+            "$comment": "auth.type 'none' must not carry a credentialRef."
+          }
+        },
+        {
+          "if": {
+            "properties": { "type": { "enum": ["bearer", "headerKey", "queryKey"] } },
+            "required": ["type"]
+          },
+          "then": { "required": ["credentialRef"] }
+        },
+        {
+          "if": {
+            "properties": { "type": { "enum": ["headerKey", "queryKey"] } },
+            "required": ["type"]
+          },
+          "then": { "required": ["headerName"] }
+        }
+      ]
+    },
+
+    "resiliency": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "retry": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxAttempts": { "type": "integer", "minimum": 1, "maximum": 10, "default": 3 },
+            "backoff": { "enum": ["exponential", "constant"], "default": "exponential" },
+            "baseDelayMs": { "type": "integer", "minimum": 0, "default": 200 },
+            "jitter": { "type": "boolean", "default": true }
+          }
+        },
+        "circuitBreaker": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "failureRatio": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+            "samplingSeconds": { "type": "integer", "minimum": 1 },
+            "breakSeconds": { "type": "integer", "minimum": 1 },
+            "minThroughput": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+
+    "resource": {
+      "type": "object",
+      "required": ["name", "transform"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$",
+          "description": "Unique within the integration. Appears in the invoke URL."
+        },
+        "method": {
+          "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
+          "default": "GET",
+          "description": "REST only; ignored for graphql, which is always POST."
+        },
+        "path": {
+          "type": "string",
+          "description": "Appended to baseUrl. Every {placeholder} needs a matching param with in: path — enforced by the loader, not here."
+        },
+        "query": {
+          "type": "string",
+          "description": "The GraphQL document. Required when spec.protocol is graphql."
+        },
+        "params": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/param" }
+        },
+        "emit": {
+          "enum": ["single", "list"],
+          "default": "single",
+          "description": "Whether the transform yields one record or an array of them."
+        },
+        "transform": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A JMESPath expression producing canonical records. Every record must carry a non-empty 'id'. This is the anti-corruption layer."
+        },
+        "handler": {
+          "not": {},
+          "description": "Reserved escape hatch (SPEC §3.4). Not implemented — declaring it is an error rather than a silent no-op."
+        }
+      }
+    },
+
+    "param": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "in": {
+          "enum": ["path", "query", "variable"],
+          "default": "query",
+          "description": "'variable' is for graphql resources."
+        },
+        "required": { "type": "boolean", "default": false },
+        "default": {
+          "type": "string",
+          "description": "Used when the caller omits the param. Strings only — params are serialised into a URL."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "required": { "const": true } }, "required": ["required"] },
+          "then": {
+            "not": { "required": ["default"] },
+            "$comment": "A required param with a default can never actually be required."
+          }
+        }
+      ]
+    }
+  }
+}
