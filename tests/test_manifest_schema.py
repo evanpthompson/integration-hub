@@ -174,6 +174,13 @@ class TestAcceptances:
             "transform": "data.repository[].{ id: id }",
         }])) == []
 
+    def test_a_post_declaring_an_idempotency_key(self):
+        assert errors(base(resources=[{
+            "name": "createOrder", "method": "POST", "path": "/v1/orders",
+            "idempotencyKey": "Idempotency-Key",
+            "emit": "single", "transform": "{ id: id }",
+        }])) == []
+
     def test_defaults_block_with_headers(self):
         assert errors(base(defaults={
             "headers": {"Accept": "application/json"}, "timeoutMs": 3000})) == []

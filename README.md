@@ -141,6 +141,42 @@ dotnet test src/Orchestrator.Tests  # manifest validation, credential safety, pa
 | [`docs/PLAN.md`](docs/PLAN.md) | Phases, exit criteria, the pre-decided cut list, the 2-minute demo script |
 | [`docs/adr/`](docs/adr/) | One page per real decision, with the alternative that was rejected |
 
+## Why not Apache Camel, or Mulesoft?
+
+**If you have fifty integrations and a team, you should use them.** Connector
+libraries, mature transformation tooling, EIP patterns, monitoring, support contracts,
+and a hiring pool that already knows them. Building this instead would be a bad
+engineering decision and I would say so in the room.
+
+This exists to test one hypothesis, and the hypothesis is narrow enough to state:
+
+> Constraining an integration to **pure configuration** — no generated code, no
+> compiled route, no deploy — makes it authorable by a language model. Is that worth
+> the expressiveness you give up?
+
+Camel and Mulesoft are code, or code-shaped. A Camel route is a Java DSL with
+processors: compiled, deployed, reviewed. A Mulesoft flow is assembled visually but is
+still a deployable artifact. Neither is "add a config file and it is live."
+
+That distinction had no particular value until recently. It has one now: you cannot
+reliably ask a model to author a production Camel route. You can absolutely ask it to
+author twenty lines of YAML, check them against a published schema, dry-run them
+against the live API, and confirm real records come back — in one conversation, with
+no deploy. Mulesoft is adding AI assistants that help a human build a flow; this is a
+different interaction shape.
+
+**And the trade is real.** Camel does content-based routing, aggregation, splitting,
+sagas, transactional outbox, JMS, Kafka, FTP, SOAP, and three hundred connectors. This
+does an HTTP call and a JMESPath expression. The declarative-only constraint that makes
+agent authoring possible is exactly what makes it less capable. That is the bet: pure
+configuration is enough for the common case, and the escape hatch
+([ADR 0001](docs/adr/0001-declarative-manifests.md)) exists for when it isn't.
+
+The lineage is borrowed on purpose rather than reinvented — the canonical envelope is a
+canonical data model, the transform is an anti-corruption layer, the
+classify-then-decide retry split is standard EIP, and planned payload capture is a
+wiretap.
+
 ## Why this exists
 
 It is a scaled-down rebuild of an integration platform I built at RX Savings Solutions — which

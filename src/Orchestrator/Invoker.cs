@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Polly;
 using IntegrationHub.Worker.V1;
 
 // The generated service type is `IntegrationHub.Worker.V1.Worker`, and from inside
@@ -49,17 +50,28 @@ public sealed class Invoker(WorkerClient worker, ResiliencePipelines pipelines, 
         request.Headers.Add(manifest.Spec.Defaults.Headers);
         // auth.type is always "none" in MVP-0 — credential resolution is task 1.4.
 
+        // One key for the whole logical operation, reused across every attempt — that
+        // is what lets the upstream collapse duplicates. A per-attempt key would defeat
+        // the entire point.
+        if (!string.IsNullOrWhiteSpace(resource.IdempotencyKey))
+        {
+            request.Headers[resource.IdempotencyKey] = runId;
+        }
+
         var started = Stopwatch.GetTimestamp();
         var attempts = 0;
         InvokeResponse response;
+
+        var context = ResilienceContextPool.Shared.Get(ct);
+        context.Properties.Set(ResilienceKeys.RetrySafe, IsRetrySafe(manifest, resource));
         try
         {
-            response = await pipelines.For(manifest).ExecuteAsync(async token =>
+            response = await pipelines.For(manifest).ExecuteAsync(async ctx =>
             {
                 attempts++;
                 request.Attempt = attempts;
-                return await worker.InvokeAsync(request, cancellationToken: token);
-            }, ct);
+                return await worker.InvokeAsync(request, cancellationToken: ctx.CancellationToken);
+            }, context);
         }
         catch (Polly.CircuitBreaker.BrokenCircuitException)
         {
@@ -91,6 +103,10 @@ public sealed class Invoker(WorkerClient worker, ResiliencePipelines pipelines, 
                 retryable = true,
                 attempts,
             }, 503);
+        }
+        finally
+        {
+            ResilienceContextPool.Shared.Return(context);
         }
 
         var durationMs = (int)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
@@ -137,6 +153,32 @@ public sealed class Invoker(WorkerClient worker, ResiliencePipelines pipelines, 
             outcome = outcome.ToString(),
             records = records.RootElement.Clone(),
         }, 200);
+    }
+
+    /// <summary>
+    /// Whether repeating this call is safe. Retrying a POST after a timeout can create
+    /// the same record twice — the upstream may have committed before the response was
+    /// lost — so unsafe methods are only retried when the manifest supplies an
+    /// idempotency key for the upstream to deduplicate on.
+    /// </summary>
+    internal static bool IsRetrySafe(IntegrationManifest manifest, ResourceSpec resource)
+    {
+        if (!string.IsNullOrWhiteSpace(resource.IdempotencyKey))
+        {
+            return true;
+        }
+
+        // GraphQL is always an HTTP POST, but only queries are supported — mutations
+        // are not implemented. Revisit the moment they are.
+        if (manifest.Spec.Protocol == "graphql")
+        {
+            return true;
+        }
+
+        // RFC 9110 §9.2.2. PUT and DELETE are idempotent by definition; POST and PATCH
+        // are not.
+        return (resource.Method ?? "GET").ToUpperInvariant()
+            is "GET" or "HEAD" or "OPTIONS" or "TRACE" or "PUT" or "DELETE";
     }
 
     internal static bool TryBindParams(

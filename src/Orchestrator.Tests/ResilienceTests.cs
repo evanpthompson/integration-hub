@@ -17,9 +17,16 @@ internal sealed class ScriptedWorker(params InvokeResponse[] script) : WorkerCli
 
     public int Calls { get; private set; }
 
+    /// <summary>The Idempotency-Key seen on each attempt, in order.</summary>
+    public List<string> SeenKeys { get; } = [];
+
     public override AsyncUnaryCall<InvokeResponse> InvokeAsync(InvokeRequest request, CallOptions options)
     {
         Calls++;
+        if (request.Headers.TryGetValue("Idempotency-Key", out var key))
+        {
+            SeenKeys.Add(key);
+        }
         if (queue.Count == 0)
         {
             throw new InvalidOperationException(
@@ -194,6 +201,97 @@ public class ResilienceTests
         Assert.Equal(503, result.StatusCode);
         Assert.Equal("WORKER_UNAVAILABLE", payload.GetProperty("error").GetString());
         Assert.Equal(3, payload.GetProperty("attempts").GetInt32());
+    }
+
+    [Theory]
+    [InlineData("GET")]
+    [InlineData("HEAD")]
+    [InlineData("PUT")]
+    [InlineData("DELETE")]
+    public async Task Idempotent_methods_are_retried(string method)
+    {
+        var worker = new ScriptedWorker(ScriptedWorker.Retryable(), ScriptedWorker.Ok());
+        var resource = Resource();
+        resource.Method = method;
+
+        await NewInvoker(worker).InvokeAsync(Manifest(), resource, [], default);
+
+        Assert.Equal(2, worker.Calls);
+    }
+
+    [Theory]
+    [InlineData("POST")]
+    [InlineData("PATCH")]
+    public async Task A_non_idempotent_method_is_NOT_retried_by_default(string method)
+    {
+        // The upstream may have committed before the response was lost. Replaying
+        // creates the record twice — a silent data-corruption bug, not a failure.
+        var worker = new ScriptedWorker(ScriptedWorker.Retryable());
+        var resource = Resource();
+        resource.Method = method;
+
+        var result = await NewInvoker(worker).InvokeAsync(Manifest(), resource, [], default);
+
+        Assert.Equal(1, worker.Calls);
+        Assert.False(result.Ok);
+        Assert.Equal(1, Payload(result).GetProperty("attempts").GetInt32());
+    }
+
+    [Fact]
+    public async Task An_idempotency_key_makes_a_POST_safe_to_retry()
+    {
+        var worker = new ScriptedWorker(ScriptedWorker.Retryable(), ScriptedWorker.Ok());
+        var resource = Resource();
+        resource.Method = "POST";
+        resource.IdempotencyKey = "Idempotency-Key";
+
+        var result = await NewInvoker(worker).InvokeAsync(Manifest(), resource, [], default);
+
+        Assert.Equal(2, worker.Calls);
+        Assert.Equal("RetriedSuccess", Payload(result).GetProperty("outcome").GetString());
+    }
+
+    [Fact]
+    public async Task Every_attempt_carries_the_SAME_idempotency_key()
+    {
+        // A per-attempt key would defeat the entire mechanism: the upstream would see
+        // three distinct operations and happily create three records.
+        var worker = new ScriptedWorker(
+            ScriptedWorker.Retryable(), ScriptedWorker.Retryable(), ScriptedWorker.Ok());
+        var resource = Resource();
+        resource.Method = "POST";
+        resource.IdempotencyKey = "Idempotency-Key";
+
+        await NewInvoker(worker).InvokeAsync(Manifest(), resource, [], default);
+
+        Assert.Equal(3, worker.Calls);
+        Assert.Equal(3, worker.SeenKeys.Count);
+        Assert.Single(worker.SeenKeys.Distinct());
+        Assert.NotEmpty(worker.SeenKeys[0]);
+    }
+
+    [Fact]
+    public async Task A_failing_POST_still_counts_toward_the_circuit_breaker()
+    {
+        // Not retrying it does not mean ignoring it — a broken upstream is broken
+        // regardless of which verb exposed that.
+        var breaker = new CircuitBreakerSpec
+        {
+            FailureRatio = 0.5, SamplingSeconds = 30, BreakSeconds = 30, MinThroughput = 2,
+        };
+        var manifest = Manifest(maxAttempts: 3, breaker: breaker);
+        var resource = Resource();
+        resource.Method = "POST";
+
+        var worker = new ScriptedWorker(ScriptedWorker.Retryable(), ScriptedWorker.Retryable());
+        var invoker = NewInvoker(worker);
+
+        await invoker.InvokeAsync(manifest, resource, [], default);
+        await invoker.InvokeAsync(manifest, resource, [], default);
+        var third = await invoker.InvokeAsync(manifest, resource, [], default);
+
+        Assert.Equal("CIRCUIT_OPEN", Payload(third).GetProperty("error").GetString());
+        Assert.Equal(2, worker.Calls);
     }
 
     [Fact]

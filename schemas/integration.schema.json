@@ -176,6 +176,11 @@
           "minLength": 1,
           "description": "A JMESPath expression producing canonical records. Every record must carry a non-empty 'id'. This is the anti-corruption layer."
         },
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Header name carrying a per-invocation idempotency key, e.g. 'Idempotency-Key'. The same value is sent on every retry attempt so the upstream can collapse duplicates. Declaring it is what makes POST and PATCH safe to retry — without it they are attempted exactly once, because replaying a write the upstream may already have committed creates the record twice."
+        },
         "handler": {
           "not": {},
           "description": "Reserved escape hatch (SPEC §3.4). Not implemented — declaring it is an error rather than a silent no-op."

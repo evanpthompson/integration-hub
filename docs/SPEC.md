@@ -24,7 +24,32 @@ it, and what makes "time to add an integration" a metric worth measuring.
 Everything in this spec follows from that. Manifests are declarative. Transforms are
 expressions, not functions. The worker is generic. The agent writes YAML, not Python.
 
-### 1.2 Non-goals
+### 1.2 What kind of system this is
+
+Worth stating plainly, because it determines which questions have answers here and
+which do not.
+
+**This is a pass-through gateway.** A caller asks for data, the platform fetches it
+from an upstream, reshapes it into canonical form, and hands it back. It is stateless
+with respect to the data itself: the `runs` table records *that* a call happened and
+how it went, never *what came back*.
+
+**It is not an ingestion platform.** It does not land records into a system of record,
+does not own an identity map between an upstream's identifiers and internal ones,
+does not deduplicate redeliveries, and has no domain services holding business rules
+behind it.
+
+That second system is strictly larger and contains this one. Several things people
+reasonably expect from "an integration platform" — external-to-internal ID mapping,
+inbound idempotency, change detection, domain events — only exist there. The seam
+where they would attach is the canonical envelope (§3.5): today it returns to an HTTP
+caller, and it could equally be handed to a domain service over gRPC or published to
+a queue without anything upstream of it changing.
+
+Keeping that seam clean is a deliberate constraint on the current design. Building the
+second system is not currently in scope; see `PLAN.md`.
+
+### 1.3 Non-goals
 
 Explicitly out of scope for v1, listed so they don't creep back in:
 
@@ -491,6 +516,44 @@ not building.
   p50/p95 latency, success vs. retry-success rate, circuit state. That dashboard is a
   deliverable, not a nice-to-have; it is 25% of the demo.
 
+### 8.1 Blame attribution is already built
+
+The error taxonomy is the operationally valuable part, and it exists today. At 3am the
+question is never "is it broken", it is "whose fault is it and what do I tell them":
+
+| Code | Whose problem |
+|---|---|
+| `TRANSFORM` | Ours — the manifest's expression does not match reality |
+| `UPSTREAM_5XX` | Theirs |
+| `UPSTREAM_4XX` | Ours — we called it wrong (bad params, bad auth) |
+| `RATE_LIMITED` | Ours — back off |
+| `TIMEOUT` / `CONNECT` | The network, or they are down hard |
+| `WORKER_UNAVAILABLE` | Ours — internal |
+| `CIRCUIT_OPEN` | Ours — we are deliberately not calling them right now |
+
+### 8.2 Payload capture and replay — designed, not built
+
+Traces give timing. They never give the body, and the body is what you need when a
+transform emits garbage. Every mature integration platform has this; Camel calls it a
+wiretap. Its absence is the largest debugging gap in the current design.
+
+- **Capture:** opt-in per integration, **failed runs only** by default, redacted, with
+  a short TTL. Payloads carry PII and occasionally credentials, so "log everything" is
+  not available — this is a retention and redaction problem before it is a storage one.
+- **Replay:** re-run a transform against a captured payload without touching the
+  upstream. Turns fixing a broken expression from a deploy cycle into a few seconds.
+
+Replay pairs with the agent in a way worth calling out: given a captured payload, the
+agent can iterate a JMESPath expression until the records come out right, with zero
+upstream calls and no rate limit to respect.
+
+### 8.3 The trust boundary makes auth failures hard to debug — on purpose
+
+The worker never logs headers (§5), so a 401 cannot be diagnosed by inspecting what
+was sent. That is correct and should stay. It needs a deliberate escape hatch instead:
+a debug mode reporting **which** `credentialRef` resolved and **from which source**
+(env var vs. mounted secret vs. not found), never the value.
+
 ---
 
 ## 9. Metrics the project must produce
@@ -549,6 +612,36 @@ GraphQL at all, and it is worth leading with in an interview.
 
 Transport is stdio; the agent runs on the laptop and talks to the cluster over the dev
 ingress. It is a client tool by nature — containerizing it would be a category error.
+
+### 11.1 The inversion: every integration becomes an MCP tool
+
+The six tools above make the hub something an agent **configures**. There is a second,
+cheaper move that makes it something any agent **uses**.
+
+Each manifest resource already carries everything an MCP tool definition needs: a
+name, a description, a typed parameter list with required flags and defaults, and a
+known output shape. So the registry can **project itself** as a tool surface — one MCP
+tool per resource, generated from the manifests, no per-integration code:
+
+```
+synthetic.orders(limit, offset)        → canonical records
+github.recentIssues(owner, repo)       → canonical records
+open-meteo.currentWeather(lat, lon)    → canonical records
+```
+
+The consequence is the interesting part: **adding an integration instantly grants every
+connected model a new capability.** Ask the agent to add the Hacker News API, and
+thirty seconds later any model on that server can call Hacker News — with the auth,
+retries, rate limiting and canonical shaping already applied, because they are the
+platform's job rather than the model's.
+
+That closes the loop the project is actually about. The agent stops being a
+configuration assistant bolted onto an integration platform, and the platform becomes
+the thing that gives agents governed access to APIs. Credentials never reach the
+model; the manifest is the policy boundary.
+
+Estimated at about a day on top of Phase 2, since the parameter metadata and the
+invoke path both already exist. Not scheduled — see `PLAN.md`.
 
 Prompting note: `draft_integration` is where the LLM does real work (inferring the JMESPath
 transform from a probed shape). Its system prompt, the manifest JSON Schema, and two

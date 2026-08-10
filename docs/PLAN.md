@@ -261,6 +261,44 @@ If the goal is specifically *functions on the existing k3s cluster* rather than 
 compatibility, the answer is Knative or OpenFaaS, not an emulator. Worth deciding
 which question is actually being asked before either lands on a schedule.
 
+### Candidate: project every integration as an MCP tool
+
+**The highest value-per-hour item on this page.** Roughly a day, and it changes what
+the project *is* rather than making it better at what it already does. Full write-up
+in [`SPEC.md` §11.1](SPEC.md).
+
+Each manifest resource already has a name, a description, typed params with required
+flags and defaults, and a known output shape — everything an MCP tool definition needs.
+So the registry can generate one MCP tool per resource, with no per-integration code.
+
+The effect: **adding an integration instantly gives every connected model a new
+capability**, with auth, retries, rate limiting and canonical shaping already applied
+because those are the platform's job, not the model's. Credentials never reach the
+model; the manifest is the policy boundary.
+
+It also completes the story the project is about. Phase 2 makes the hub something an
+agent configures. This makes it something agents *use* — which is a considerably more
+interesting sentence to say out loud, and a better demo: add an integration in one
+breath, then use it in the next.
+
+Depends on Phase 2 (the MCP server exists) and reads better with credentials done, so
+a governed-access claim is actually true.
+
+### Correctness and operability gaps found in review
+
+Surfaced while walking the architecture. Ordered by what breaks if ignored.
+
+| Gap | Why it matters | Size |
+|---|---|---|
+| ~~Method-blind retry~~ | **Fixed.** Retry was firing on any transient failure regardless of HTTP verb, so a POST that timed out after the upstream had already committed would be replayed and could create the record twice. Silent data corruption, not a visible failure. Now: only idempotent methods retry by default; `idempotencyKey` on a resource makes POST/PATCH safe by sending one stable key across every attempt. A failing POST still counts toward the breaker. | done |
+| **OAuth2 client credentials + token cache** | The single biggest hole in the auth story. Static bearer tokens covered MVP-0; most real partner APIs need a token exchange and reuse until expiry. Stateful, so it is a component next to the credential store, not a manifest field. | ~1 day |
+| **Payload capture + replay** | The largest debugging gap. Traces give timing, never the body — and the body is what you need when a transform emits garbage. Capture must be opt-in, failed-runs-only, redacted, short TTL, because payloads carry PII. Replay then turns fixing a transform into seconds instead of a deploy, and lets the agent iterate an expression against a real payload with zero upstream calls. | ~1–2 days |
+| **Response caching + conditional requests** | ETag / `If-None-Match` on GETs makes polling nearly free and is a manifest field (`cache: { ttlSeconds }`). Distinct from token caching: different lifetime, different owner. | ~half day |
+| **Auth debug mode** | The trust boundary means headers are never logged, so a 401 cannot be diagnosed from logs. Needs a deliberate escape hatch reporting which `credentialRef` resolved and from which source — never the value. | ~2 hours |
+| **Identity map (external ID ↔ internal ID)** | Only meaningful in the ingestion-platform direction (SPEC §1.2). Its own store, separate from run history: `(integration_id, external_id) → internal_id, first_seen, last_seen, content_hash`. The hash is what makes "did this actually change?" cheap, which is what makes polling affordable. Postgres with a unique index handles this well past any scale here; keep the access pattern key-value so a DynamoDB swap stays a repository change rather than a redesign. | ~2 days |
+| **Inbound idempotency / delivery dedupe** | Same webhook twice, same record re-fetched. Needs the identity map first — there is nothing to deduplicate against in a pass-through. | after the above |
+| **Contract tests to a domain service** | Not out of scope in principle, out of scope because there is no domain service to test into. Once one exists this is the most valuable test layer: proto gives compile-time checks today, consumer-driven contract tests would give the rest, and the synthetic service already makes full-stack tests deterministic. | when B exists |
+
 ---
 
 ## Later (not this project)

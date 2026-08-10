@@ -93,6 +93,13 @@ public sealed class ResourceSpec
     // GraphQL resources carry a query instead of a path — task 1.8.
     public string? Query { get; set; }
 
+    /// <summary>
+    /// Header name to carry a per-invocation idempotency key (e.g. "Idempotency-Key").
+    /// Declaring it is what makes a non-idempotent method safe to retry: the same key
+    /// goes out on every attempt, so the upstream can collapse duplicates.
+    /// </summary>
+    public string? IdempotencyKey { get; set; }
+
     // Reserved escape hatch (SPEC §3.4). Rejected at validation until implemented.
     public string? Handler { get; set; }
 }

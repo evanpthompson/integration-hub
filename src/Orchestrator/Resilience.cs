@@ -14,6 +14,15 @@ public enum Outcome
     Failed,
 }
 
+public static class ResilienceKeys
+{
+    /// <summary>
+    /// Set per invocation, because retry safety is a property of the resource
+    /// (its HTTP method) while the pipeline is cached per integration.
+    /// </summary>
+    public static readonly ResiliencePropertyKey<bool> RetrySafe = new("ih.retry-safe");
+}
+
 /// <summary>
 /// Builds one resilience pipeline per integration from its manifest.
 /// </summary>
@@ -45,17 +54,34 @@ public sealed class ResiliencePipelines(ILogger<ResiliencePipelines> logger)
         // A worker that is restarting or past its deadline is a transient condition,
         // same as an upstream 503 — this is what makes the "scale the worker to zero
         // mid-run" demo recover rather than just fail.
-        var shouldHandle = new PredicateBuilder<InvokeResponse>()
-            .HandleResult(static r => r is { Ok: false, Retryable: true })
-            .Handle<RpcException>(static ex =>
-                ex.StatusCode is StatusCode.Unavailable or StatusCode.DeadlineExceeded);
+        static bool IsTransient(Outcome<InvokeResponse> outcome) =>
+            outcome.Result is { Ok: false, Retryable: true }
+            || (outcome.Exception is RpcException ex
+                && ex.StatusCode is StatusCode.Unavailable or StatusCode.DeadlineExceeded);
+
+        // The breaker counts every transient failure, including ones that were not
+        // retried — a failing POST is still evidence the upstream is unhealthy.
+        var breakerPredicate = new Func<CircuitBreakerPredicateArguments<InvokeResponse>, ValueTask<bool>>(
+            args => ValueTask.FromResult(IsTransient(args.Outcome)));
+
+        // Retry additionally requires the call to be safe to repeat. Replaying a POST
+        // after a timeout can create the same order twice — the upstream may well have
+        // committed before the response was lost.
+        var retryPredicate = new Func<RetryPredicateArguments<InvokeResponse>, ValueTask<bool>>(args =>
+        {
+            if (!args.Context.Properties.TryGetValue(ResilienceKeys.RetrySafe, out var safe) || !safe)
+            {
+                return ValueTask.FromResult(false);
+            }
+            return ValueTask.FromResult(IsTransient(args.Outcome));
+        });
 
         var retry = manifest.Spec.Resiliency?.Retry;
         if (retry is { MaxAttempts: > 1 })
         {
             builder.AddRetry(new RetryStrategyOptions<InvokeResponse>
             {
-                ShouldHandle = shouldHandle,
+                ShouldHandle = retryPredicate,
                 // MaxRetryAttempts counts retries; the manifest counts total attempts.
                 MaxRetryAttempts = retry.MaxAttempts - 1,
                 BackoffType = retry.Backoff == "constant"
@@ -81,7 +107,7 @@ public sealed class ResiliencePipelines(ILogger<ResiliencePipelines> logger)
         {
             builder.AddCircuitBreaker(new CircuitBreakerStrategyOptions<InvokeResponse>
             {
-                ShouldHandle = shouldHandle,
+                ShouldHandle = breakerPredicate,
                 FailureRatio = breaker.FailureRatio,
                 // Polly rejects a sampling window under half a second, and a breaker
                 // needs a few calls before a ratio means anything.
