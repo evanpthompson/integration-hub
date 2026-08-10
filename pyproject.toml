@@ -1,0 +1,40 @@
+[project]
+name = "integration-hub-python"
+version = "0.1.0"
+description = "Worker (and later, MCP agent) for Integration Hub"
+requires-python = ">=3.13"
+dependencies = [
+    "grpcio>=1.68",
+    "httpx>=0.28",
+    "jmespath>=1.0",
+]
+
+# ponytail: virtual project — nothing here is built or installed, it just pins the
+# environment. Becomes a [tool.uv.workspace] with worker/ and agent/ members when
+# the agent lands in Phase 2.
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "grpcio-tools>=1.68",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "ruff>=0.8",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Generated protobuf stubs
+"worker/worker_pb2*.py" = ["ALL"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["worker"]
+testpaths = ["worker/tests"]

@@ -7,11 +7,30 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.35.1" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.83.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.83.0">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.10" />
     <PackageReference Include="Scalar.AspNetCore" Version="2.16.18" />
     <!-- Pinned above the transitive 2.0.0 the webapi template resolves, which carries
          GHSA-v5pm-xwqc-g5wc (high). CI gates on "dotnet list package" vulnerability output. -->
     <PackageReference Include="Microsoft.OpenApi" Version="2.11.0" />
+    <PackageReference Include="YamlDotNet" Version="18.1.0" />
+  </ItemGroup>
+
+  <!-- Contract-first: the C# client is generated from the same proto the Python
+       worker generates its server from. Neither side hand-writes the wire types. -->
+  <ItemGroup>
+    <Protobuf Include="../../proto/worker.proto" GrpcServices="Client" ProtoRoot="../../proto" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Param binding and path substitution stay internal — they are implementation
+         detail of Invoker, not API — but they carry enough logic to deserve tests. -->
+    <InternalsVisibleTo Include="IntegrationHub.Orchestrator.Tests" />
   </ItemGroup>
 
 </Project>

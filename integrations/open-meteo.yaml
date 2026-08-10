@@ -45,3 +45,15 @@ spec:
           windKph: current.wind_speed_10m,
           observedAt: current.time
         }
+
+    # Added to prove the MVP-0 thesis: a different endpoint, a different response
+    # shape, and the other emit mode — with no change to any code.
+    - name: elevation
+      method: GET
+      path: /v1/elevation
+      params:
+        - { name: latitude,  in: query, required: true }
+        - { name: longitude, in: query, required: true }
+      emit: list
+      transform: |
+        elevation[].{ id: to_string(@), meters: @ }

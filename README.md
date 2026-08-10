@@ -8,10 +8,13 @@ API, a C# orchestrator owns definitions, credentials and resiliency, a Python wo
 fetch and transform over gRPC, and an MCP agent turns *"add an integration to the Hacker News
 API"* into a working, invocable integration without anyone writing code.
 
-> **Status: week 1 of 4.** The spec is complete and the orchestrator serves health and API
-> docs. The registry, worker, agent layer, and cluster deployment are not built yet. This
-> README describes what is being built; [`docs/PLAN.md`](docs/PLAN.md) says how far along it
-> actually is. Nothing here claims to work that doesn't.
+> **Status: week 1 of 4 — MVP-0 works.** A manifest drives a real upstream call end to end:
+> orchestrator → gRPC → worker → HTTP → JMESPath → canonical record. Adding a resource is a
+> YAML edit with no code change and no rebuild, which was the whole point of MVP-0.
+>
+> **Not built yet:** persistence and run history, retries and circuit breaking, credentials
+> (so no authenticated integrations), GraphQL, the MCP agent, and the cluster deployment.
+> [`docs/PLAN.md`](docs/PLAN.md) tracks what lands when. Nothing here claims to work that doesn't.
 
 ---
 
@@ -90,14 +93,45 @@ Credentials appear only as `credentialRef` names, never values. See
 
 ## Quickstart
 
+Needs the [.NET 10 SDK](https://dotnet.microsoft.com/download) and [uv](https://docs.astral.sh/uv/).
+
 ```bash
-dotnet run --project src/Orchestrator
-curl localhost:5066/healthz          # {"status":"ok"}
-open  localhost:5066/scalar/v1       # API reference
+# one-time: Python env + generate gRPC stubs from proto/worker.proto
+uv sync
+uv run python -m grpc_tools.protoc --proto_path=proto \
+  --python_out=worker --grpc_python_out=worker --pyi_out=worker proto/worker.proto
+
+uv run python worker/server.py &          # worker  :50051
+dotnet run --project src/Orchestrator &   # orchestrator :5066
 ```
 
-Requires the .NET 10 SDK. The worker, registry, and agent land in week 1–3 —
-see [`docs/PLAN.md`](docs/PLAN.md).
+Then call an upstream that nobody wrote code for:
+
+```bash
+curl -X POST localhost:5066/integrations/open-meteo/resources/currentWeather/invoke \
+  -H 'content-type: application/json' \
+  -d '{"latitude":"38.88","longitude":"-94.82"}'
+```
+
+```json
+{
+  "runId": "019fea06-b1b2-76d9-b4c8-eb542183508b",
+  "integrationId": "open-meteo", "resource": "currentWeather",
+  "count": 1, "durationMs": 581, "attempts": 1,
+  "records": [{ "id": "38.87,-94.80", "tempC": 28.8, "windKph": 21.3,
+                "observedAt": "2026-08-10T04:45" }]
+}
+```
+
+`localhost:5066/scalar/v1` is the API reference. `GET /integrations` lists what's loaded.
+
+## Tests
+
+```bash
+./scripts/e2e.sh                    # both services, real upstream, 9 assertions
+uv run pytest                       # worker logic
+dotnet test src/Orchestrator.Tests  # manifest validation, credential safety, param binding
+```
 
 ## Docs
 
