@@ -50,8 +50,26 @@ most of the work anyway.
 | 1.8 | GraphQL **upstream** support + `github-graphql.yaml` | `repoTopics` returns records; a `RATE_LIMITED` GraphQL error is classified retryable. |
 | 1.9 | End-to-end script against a stub upstream | Runs green locally. |
 
-**Exit criteria:** three integrations invocable from `curl`, run history in Postgres, retries
-observable. Still localhost, still no agent.
+**Checkpoint — MVP-0, the walking skeleton (first 2–3 days).** Before the rest of Phase 1,
+build the thinnest slice that proves the one assumption everything else rests on: that a
+manifest can drive a cross-language call and produce a correct canonical record with no
+integration-specific code. That is **1.1 + the file half of 1.3 + 1.5 + 1.7 + 1.9**, against
+`open-meteo` only — keyless, so no credential machinery is needed to prove the transform path.
+Manifests stay in memory; no Postgres, no retries, no GitHub, no agent.
+
+Done when this returns real weather:
+
+```bash
+curl -X POST localhost:5066/integrations/open-meteo/resources/currentWeather/invoke \
+  -H 'content-type: application/json' -d '{"latitude":38.88,"longitude":-94.82}'
+```
+
+…and, the criterion that actually matters, **adding a second resource to that YAML requires
+zero code changes.** If it doesn't, stop and fix the design before building anything on top of
+it — the agent layer is worthless if integrations aren't really just configuration.
+
+**Exit criteria (full phase):** three integrations invocable from `curl`, run history in
+Postgres, retries observable. Still localhost, still no agent.
 
 **Order note:** do 1.8 immediately after 1.5 while the fetch path is fresh — it's a two-hour
 change then and a half-day change later.
@@ -107,6 +125,7 @@ app to a working pipeline rather than standing delivery up.
 | 3.7 | Kubernetes-native gRPC readiness probe on the worker; `/readyz` with DB ping on the orchestrator | No FastAPI, no `grpc_health_probe` binary. |
 | 3.8 | OpenTelemetry on both services → OTLP → Tempo; `ServiceMonitor` for Prometheus | The cross-language trace is the deliverable here. |
 | 3.9 | Ingress reachable on the LAN, serving `/scalar` | Add the `/etc/hosts` entry to the runbook. |
+| 3.10 | OIDC on the orchestrator API against the cluster's Authentik | ~half a day. The IdP is already running and its clients are Terraform-declarative, so most of this is wiring. **Not a copy of the Argo/Grafana pattern:** those are browser SSO via authorization-code, keyed off a redirect URI; the caller here is the MCP agent, so it wants **client credentials**, which has no meaningful redirect URI. Expect a small change to the shared `oauth2_redirect_uris` variable shape, not just a new map entry. |
 
 **Exit criteria:** Argo shows the app healthy and synced; a `curl` through the ingress returns
 a real record; one Tempo trace spans C# → gRPC → Python → GitHub.
@@ -192,7 +211,6 @@ Parked deliberately. Adding any of these is how four weeks becomes twelve.
 
 - GraphQL subscriptions for live run streaming in the demo
 - The `handler:` plugin escape hatch and agent-scaffolded handler stubs
-- OIDC on the orchestrator API
 - Scheduled/polled sync and inbound webhooks
 - GitOps-managed secrets (KSOPS or External Secrets)
 - preprod/prod overlays, once a second cluster exists

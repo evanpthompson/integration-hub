@@ -30,7 +30,7 @@ Explicitly out of scope for v1, listed so they don't creep back in:
 
 | Not building | Why |
 |---|---|
-| Multi-tenancy / orgs / RBAC | Single-user portfolio system. Authentik OIDC is a stretch goal, not v1. |
+| Multi-tenancy / orgs / RBAC | Single-user system — one identity, no roles. OIDC *authentication* on the API is in scope (PLAN Phase 3, task 3.10); per-user *authorization* is not. |
 | Inbound webhooks | Doubles the surface area, adds nothing to the demo. |
 | Scheduled polling / cron sync | On-demand invoke is enough to demo and measure. |
 | A custom web UI | Scalar (API docs) + Grafana (metrics/traces) cover "visual" for free. |
