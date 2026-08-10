@@ -58,50 +58,62 @@ change then and a half-day change later.
 
 ---
 
-## Phase 2 — On the cluster (Aug 18 – 24)
-
-**Goal:** it runs in the k3s dev cluster, GitOps-synced, with traces.
-
-| # | Task | Notes |
-|---|---|---|
-| 2.1 | Get a working kubeconfig for the dev cluster | Do this first — it's the gate. |
-| 2.2 | Dockerfiles for orchestrator and worker; multi-stage, non-root | `deploy/`. |
-| 2.3 | `.gitlab-ci.yml`: lint → test → build → push to the **public** container registry | Sidesteps the missing-`imagePullSecret` gap entirely (Risk #1). |
-| 2.4 | Postgres in-cluster: Deployment + PVC + Service, `postgres:17-alpine` | `ponytail:` single instance, no HA, no operator. Upgrade path is CNPG if this ever mattered, which it won't. |
-| 2.5 | GitOps repo: `base/integration-hub/` (3 Deployments, 2 Services, 1 Ingress), `overlays/dev/…`, Argo `Application` | Mirror the existing sample-app pattern exactly. Kustomize, not Helm — follow what actually works in that repo today, not the aspirational chart flow. |
-| 2.6 | Create the credentials secret by hand; document it in `RUNBOOK.md` | The cluster's SOPS/KSOPS decryption path is documented but not installed (Risk #2). Do not install it for one secret. |
-| 2.7 | Kubernetes-native gRPC readiness probe on the worker; `/readyz` with DB ping on the orchestrator | No FastAPI, no `grpc_health_probe` binary. |
-| 2.8 | OpenTelemetry on both services → OTLP → Tempo; `ServiceMonitor` for Prometheus | The cross-language trace is the deliverable here. |
-| 2.9 | Ingress reachable on the LAN, serving `/scalar` | Add the `/etc/hosts` entry to the runbook. |
-
-**Exit criteria:** Argo shows the app healthy and synced; a `curl` through the ingress returns
-a real record; one Tempo trace spans C# → gRPC → Python → GitHub.
-
-**Watch item:** 2.1 and 2.5 are where the unknown-unknowns live. If Phase 2 is going to
-overrun, it will announce itself by Aug 20. If it does, take the Phase 2 cut and move on — the
-agent layer is worth more than the cluster is.
-
----
-
-## Phase 3 — The agent + GraphQL read API (Aug 25 – 31)
+## Phase 2 — The agent + GraphQL read API (Aug 18 – 24)
 
 **Goal:** the thing that makes this not a CRUD app.
 
+Ordered ahead of the cluster deliberately. The cut list below says the agent outranks the
+cluster if only one survives; building them in the opposite order would have contradicted that
+every day of the schedule. The agent talks to the orchestrator over HTTP, so localhost is a
+perfectly good target — nothing here needs Kubernetes.
+
 | # | Task | Notes |
 |---|---|---|
-| 3.1 | HotChocolate: `Query` with `integrations`, `integration`, `runs`, `stats` | SPEC §6. |
-| 3.2 | `DataLoader` for `Integration.runs`; test asserting ≤ 2 SQL queries | The N+1 answer needs to be a file, not a claim. |
-| 3.3 | `Stats` resolver in SQL, including `retrySuccessRate` | This backs every number in the write-up. Get it right. |
-| 3.4 | MCP server skeleton, stdio, registered in Claude Code | `agent/`, uv workspace member. |
-| 3.5 | `probe_api` — OpenAPI / GraphQL introspection / sample-response shape summary | Return a *summary*, not the payload; context budget matters. |
-| 3.6 | `draft_integration` + `agent/prompts/` (system prompt, manifest JSON Schema, 2 few-shot examples) | The highest-iteration part of the project. Budget a full day. |
-| 3.7 | `validate_integration`, `apply_integration`, `invoke` | Thin HTTP wrappers. |
-| 3.8 | `graphql` passthrough tool | One tool replaces three read tools and improves as the schema grows. |
-| 3.9 | Dry-run the full loop against Hacker News, then `git checkout` the result away | Rehearse the demo target without spending it. |
+| 2.1 | HotChocolate: `Query` with `integrations`, `integration`, `runs`, `stats` | SPEC §6. |
+| 2.2 | `DataLoader` for `Integration.runs`; test asserting ≤ 2 SQL queries | The N+1 answer needs to be a file, not a claim. |
+| 2.3 | `Stats` resolver in SQL, including `retrySuccessRate` | This backs every number in the write-up. Get it right. |
+| 2.4 | MCP server skeleton, stdio, registered in Claude Code | `agent/`, uv workspace member. |
+| 2.5 | `probe_api` — OpenAPI / GraphQL introspection / sample-response shape summary | Return a *summary*, not the payload; context budget matters. |
+| 2.6 | `draft_integration` + `agent/prompts/` (system prompt, manifest JSON Schema, 2 few-shot examples) | The highest-iteration part of the project. Budget a full day. |
+| 2.7 | `validate_integration`, `apply_integration`, `invoke` | Thin HTTP wrappers. |
+| 2.8 | `graphql` passthrough tool | One tool replaces three read tools and improves as the schema grows. |
+| 2.9 | Dry-run the full loop against Hacker News, then `git checkout` the result away | Rehearse the demo target without spending it. |
 
 **Exit criteria:** "add an integration to the Hacker News API that returns the top 10 stories"
 produces a valid manifest, applies it, invokes it, and returns real stories — in one
 conversation, without hand-editing.
+
+At this point the project is demoable end to end on a laptop. Everything after this is
+production texture, not new capability.
+
+---
+
+## Phase 3 — On the cluster (Aug 25 – 31)
+
+**Goal:** it runs in the k3s dev cluster, GitOps-synced, with traces.
+
+Smaller than it looks. The runner (`tags: [homelab]`), the cluster, ingress, TLS, Argo CD, and
+a default `local-path` StorageClass are all already running and verified — this phase adds an
+app to a working pipeline rather than standing delivery up.
+
+| # | Task | Notes |
+|---|---|---|
+| 3.1 | Point `KUBECONFIG` at the existing dev cluster credentials | Already provisioned and reachable. Not a gate. |
+| 3.2 | Dockerfiles for orchestrator and worker; multi-stage, non-root | `deploy/`. |
+| 3.3 | `.gitlab-ci.yml`: lint → test → build → push to the **public** container registry | Sidesteps the missing-`imagePullSecret` gap entirely (Risk #1). Dispatches to the existing self-hosted runner, so it burns no shared CI minutes. |
+| 3.4 | Postgres in-cluster: Deployment + PVC + Service, `postgres:17-alpine` | `ponytail:` single instance, no HA, no operator. Upgrade path is CNPG if this ever mattered, which it won't. |
+| 3.5 | GitOps repo: `base/integration-hub/` (3 Deployments, 2 Services, 1 Ingress), `overlays/dev/…`, Argo `Application` | Mirror the existing sample-app pattern exactly. Kustomize, not Helm — follow what actually works in that repo today, not the aspirational chart flow. |
+| 3.6 | Create the credentials secret by hand; document it in `RUNBOOK.md` | KSOPS is documented but not installed (Risk #2). Do not install it for one secret. |
+| 3.7 | Kubernetes-native gRPC readiness probe on the worker; `/readyz` with DB ping on the orchestrator | No FastAPI, no `grpc_health_probe` binary. |
+| 3.8 | OpenTelemetry on both services → OTLP → Tempo; `ServiceMonitor` for Prometheus | The cross-language trace is the deliverable here. |
+| 3.9 | Ingress reachable on the LAN, serving `/scalar` | Add the `/etc/hosts` entry to the runbook. |
+
+**Exit criteria:** Argo shows the app healthy and synced; a `curl` through the ingress returns
+a real record; one Tempo trace spans C# → gRPC → Python → GitHub.
+
+**Watch item:** 3.4 and 3.5 are where the unknown-unknowns live — Postgres is the first
+stateful workload in this cluster, and this is the first app added to the GitOps repo since the
+sample. If the phase overruns, take the Phase 3 cut; by now the demo already works locally.
 
 ---
 
@@ -148,9 +160,10 @@ When the schedule slips, cut from the top. No re-litigating mid-sprint.
    most of the tuning pain.
 2. **Postgres** → SQLite on a PVC. EF Core provider swap; migrations still demonstrate the
    same skill.
-3. **Cluster deployment (Phase 2)** → run the demo locally, keep the Dockerfiles and the
+3. **Cluster deployment (Phase 3)** → run the demo locally, keep the Dockerfiles and the
    GitOps manifests as unapplied, reviewable artifacts. Costs infra signal; costs the demo
-   nothing. **The agent layer outranks the cluster — if only one survives, it's the agent.**
+   nothing. **The agent layer outranks the cluster — if only one survives, it's the agent**,
+   which is why the agent is built first and this cut is cheap to take.
 4. **Distributed tracing** → metrics and structured logs only. Painful, because the trace
    waterfall is the best screenshot in the project. Cut it before cutting the agent.
 5. **`github-graphql` upstream** → REST only. Keeps the GraphQL *read API*, which is the
