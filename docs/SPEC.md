@@ -31,7 +31,7 @@ Explicitly out of scope for v1, listed so they don't creep back in:
 | Not building | Why |
 |---|---|
 | Multi-tenancy / orgs / RBAC | Single-user system — one identity, no roles. OIDC *authentication* on the API is in scope (PLAN Phase 3, task 3.10); per-user *authorization* is not. |
-| Inbound webhooks | Doubles the surface area, adds nothing to the demo. |
+| Inbound webhooks | Not in v1 — but no longer a permanent non-goal. See `PLAN.md`, "Direction changes". |
 | Scheduled polling / cron sync | On-demand invoke is enough to demo and measure. |
 | A custom web UI | Scalar (API docs) + Grafana (metrics/traces) cover "visual" for free. |
 | Streaming / large-result pagination beyond a page cap | Note the ceiling, don't build it. |
@@ -558,6 +558,12 @@ most likely to need iteration.
 ---
 
 ## 12. Repository layout
+
+> **Superseded in direction, not yet in fact.** Supporting services are moving to
+> their own repos, each with its own Helm chart, plus a shared umbrella chart. See
+> `PLAN.md`, "Direction changes". The layout below describes the repo as it stands
+> today; `synthetic/` is the first candidate to be split out, and splitting it forces
+> the question of where `proto/worker.proto` lives.
 
 Monorepo. One CI pipeline, one version, one place for a reviewer to look.
 

@@ -205,12 +205,61 @@ Those are the project.
 
 ---
 
+## Direction changes not yet scheduled
+
+Decisions taken after the plan was written. Recorded here rather than silently
+rewritten into the phases, because each one contradicts something already committed.
+
+### Multi-repo, managed by Helm
+
+`SPEC.md` §12 says monorepo and task 3.5 says Kustomize. Both are superseded: supporting
+services get their own repos, each shipping its own Helm chart, with a shared umbrella
+chart eventually deploying the whole stack.
+
+Helm is not a fight with the platform — it is where the platform was already going.
+The delivery docs describe versioned charts pushed to an OCI registry as the target
+state, with Kustomize as the interim. This accelerates that rather than diverging.
+
+**The real cost is the proto.** `proto/worker.proto` is a contract shared by three
+languages. In a monorepo it is free; across repos it needs a home and a version.
+Unresolved — options are a small contracts repo vendored by copy with a CI drift
+check, a published artifact per language, or a schema registry. Decide before the
+first repo is split, because it determines everyone's build.
+
+### Inbound webhooks
+
+`SPEC.md` §1.2 lists webhooks as a non-goal. That changes: they are wanted, just not
+yet. Two halves, and they are independent:
+
+- **Platform:** an inbound endpoint per integration, signature verification, replay
+  protection, and delivery into the same canonical envelope the pull path produces.
+  The manifest grows a `webhooks:` block. This is a genuine second ingress direction,
+  not a variation on invoke — it inverts who initiates.
+- **Synthetic service:** a webhook *emitter*, so the inbound path can be tested
+  deterministically. Cheap once the platform side exists — a timer and an HTTP POST.
+
+### Serverless emulation
+
+**Do not build this.** LocalStack's Community edition is free, open source, and
+already covers Lambda, S3, SQS, SNS, DynamoDB and API Gateway; it is a `docker run`.
+Writing an emulator is a multi-year project that several teams already lost.
+
+If the goal is specifically *functions on the existing k3s cluster* rather than AWS
+compatibility, the answer is Knative or OpenFaaS, not an emulator. Worth deciding
+which question is actually being asked before either lands on a schedule.
+
+---
+
 ## Later (not this project)
 
 Parked deliberately. Adding any of these is how four weeks becomes twelve.
 
 - GraphQL subscriptions for live run streaming in the demo
 - The `handler:` plugin escape hatch and agent-scaffolded handler stubs
-- Scheduled/polled sync and inbound webhooks
+- Scheduled/polled sync
+- Per-environment `baseUrl` overrides for manifests — `integrations/synthetic.yaml`
+  hardcodes `localhost:8080`, which will not survive the cluster
+- Per-resource headers, so a fault (or an `Accept`) can be armed on one resource
+  rather than a whole integration
 - GitOps-managed secrets (KSOPS or External Secrets)
 - preprod/prod overlays, once a second cluster exists
