@@ -45,7 +45,7 @@ most of the work anyway.
 | 1.3 | Startup reconciliation of `integrations/*.yaml` + `POST /integrations` hot-load | Both paths upsert; `source` recorded correctly. |
 | 1.4 | Credential resolution chain + redaction enricher | Redaction test passes. |
 | 1.5 | Worker: `grpc.aio` server, REST fetch via `httpx`, JMESPath transform, error classification | pytest transform + classification tests pass. |
-| 1.6 | Orchestrator gRPC client + `Microsoft.Extensions.Http.Resilience` pipeline (retry, timeout, breaker) | A `retryable=true` fake produces `RETRIED_SUCCESS`. |
+| 1.6 | Orchestrator gRPC client + Polly v8 pipeline (retry, breaker) — **done** | A `retryable=true` fake produces `RETRIED_SUCCESS`; confirmed end to end against `synthetic-flaky`. |
 | 1.7 | `POST /invoke` writes a `runs` row and returns the canonical envelope | `curl` against `open-meteo` returns real weather. |
 | 1.8 | GraphQL **upstream** support + `github-graphql.yaml` | `repoTopics` returns records; a `RATE_LIMITED` GraphQL error is classified retryable. |
 | 1.9 | End-to-end script against a stub upstream | Runs green locally. |

@@ -14,6 +14,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.10" />
+    <PackageReference Include="Polly.Core" Version="8.7.0" />
     <PackageReference Include="Scalar.AspNetCore" Version="2.16.18" />
     <!-- Pinned above the transitive 2.0.0 the webapi template resolves, which carries
          GHSA-v5pm-xwqc-g5wc (high). CI gates on "dotnet list package" vulnerability output. -->

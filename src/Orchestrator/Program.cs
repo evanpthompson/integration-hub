@@ -10,6 +10,7 @@ builder.Services.AddSingleton<IntegrationRegistry>();
 builder.Services.AddSingleton(_ => GrpcChannel.ForAddress(
     builder.Configuration["Worker:Address"] ?? "http://localhost:50051"));
 builder.Services.AddSingleton(sp => new WorkerClient(sp.GetRequiredService<GrpcChannel>()));
+builder.Services.AddSingleton<ResiliencePipelines>();
 builder.Services.AddSingleton<Invoker>();
 
 var app = builder.Build();

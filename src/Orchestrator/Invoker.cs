@@ -13,12 +13,7 @@ public sealed record InvocationResult(bool Ok, object Payload, int StatusCode);
 /// <summary>
 /// Turns a manifest resource plus caller-supplied params into one worker call.
 /// </summary>
-/// <remarks>
-/// ponytail: no retry pipeline here yet — MVP-0 makes exactly one attempt and reports
-/// what happened. Task 1.6 wraps this in Microsoft.Extensions.Http.Resilience, which is
-/// why <c>attempts</c> is already in the envelope rather than being added later.
-/// </remarks>
-public sealed class Invoker(WorkerClient worker, ILogger<Invoker> logger)
+public sealed class Invoker(WorkerClient worker, ResiliencePipelines pipelines, ILogger<Invoker> logger)
 {
     public async Task<InvocationResult> InvokeAsync(
         IntegrationManifest manifest,
@@ -55,29 +50,59 @@ public sealed class Invoker(WorkerClient worker, ILogger<Invoker> logger)
         // auth.type is always "none" in MVP-0 — credential resolution is task 1.4.
 
         var started = Stopwatch.GetTimestamp();
+        var attempts = 0;
         InvokeResponse response;
         try
         {
-            response = await worker.InvokeAsync(request, cancellationToken: ct);
+            response = await pipelines.For(manifest).ExecuteAsync(async token =>
+            {
+                attempts++;
+                request.Attempt = attempts;
+                return await worker.InvokeAsync(request, cancellationToken: token);
+            }, ct);
+        }
+        catch (Polly.CircuitBreaker.BrokenCircuitException)
+        {
+            // Failing fast while the breaker is open is the feature, not an error to
+            // paper over — the upstream gets a chance to recover instead of being
+            // hammered. 503 with Retry-After is the honest way to say so.
+            logger.LogWarning("run {RunId} rejected: circuit open for {Integration}", runId, manifest.Metadata.Id);
+            return new InvocationResult(false, new
+            {
+                runId,
+                integrationId = manifest.Metadata.Id,
+                resource = resource.Name,
+                error = "CIRCUIT_OPEN",
+                message = "the circuit breaker for this integration is open; not attempting the call",
+                retryable = true,
+                attempts = 0,
+            }, 503);
         }
         catch (Grpc.Core.RpcException ex)
         {
-            logger.LogError("run {RunId} could not reach the worker: {Status}", runId, ex.StatusCode);
+            logger.LogError(
+                "run {RunId} could not reach the worker after {Attempts} attempt(s): {Status}",
+                runId, attempts, ex.StatusCode);
             return new InvocationResult(false, new
             {
                 runId,
                 error = "WORKER_UNAVAILABLE",
                 message = $"worker RPC failed: {ex.Status.Detail}",
+                retryable = true,
+                attempts,
             }, 503);
         }
 
         var durationMs = (int)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        var outcome = response.Ok
+            ? (attempts > 1 ? Outcome.RetriedSuccess : Outcome.Success)
+            : Outcome.Failed;
 
         if (!response.Ok)
         {
             logger.LogWarning(
-                "run {RunId} {Integration}.{Resource} failed: {Code} (retryable={Retryable})",
-                runId, manifest.Metadata.Id, resource.Name, response.ErrorCode, response.Retryable);
+                "run {RunId} {Integration}.{Resource} failed after {Attempts} attempt(s): {Code} (retryable={Retryable})",
+                runId, manifest.Metadata.Id, resource.Name, attempts, response.ErrorCode, response.Retryable);
 
             return new InvocationResult(false, new
             {
@@ -89,15 +114,16 @@ public sealed class Invoker(WorkerClient worker, ILogger<Invoker> logger)
                 retryable = response.Retryable,
                 upstreamStatus = response.UpstreamStatus,
                 durationMs,
-                attempts = 1,
+                attempts,
+                outcome = Outcome.Failed.ToString(),
             }, 502);
         }
 
         using var records = JsonDocument.Parse(response.RecordsJson.Memory);
 
         logger.LogInformation(
-            "run {RunId} {Integration}.{Resource} ok count={Count} ms={Duration}",
-            runId, manifest.Metadata.Id, resource.Name, response.Count, durationMs);
+            "run {RunId} {Integration}.{Resource} {Outcome} count={Count} attempts={Attempts} ms={Duration}",
+            runId, manifest.Metadata.Id, resource.Name, outcome, response.Count, attempts, durationMs);
 
         return new InvocationResult(true, new
         {
@@ -107,7 +133,8 @@ public sealed class Invoker(WorkerClient worker, ILogger<Invoker> logger)
             fetchedAt = DateTimeOffset.UtcNow,
             count = response.Count,
             durationMs,
-            attempts = 1,
+            attempts,
+            outcome = outcome.ToString(),
             records = records.RootElement.Clone(),
         }, 200);
     }

@@ -15,6 +15,7 @@ export PATH="$HOME/.dotnet:$PATH"
 export DOTNET_NOLOGO=1 DOTNET_CLI_TELEMETRY_OPTOUT=1
 
 ORCH_URL="http://localhost:5066"
+SYNTH_URL="http://localhost:8080"
 WORKER_PORT="${WORKER_PORT:-50051}"
 FAILURES=0
 
@@ -24,6 +25,7 @@ fail() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; FAILURES=$((FAILURES + 1)); }
 cleanup() {
   [[ -n "${WORKER_PID:-}" ]] && kill "$WORKER_PID" 2>/dev/null || true
   [[ -n "${ORCH_PID:-}" ]] && kill "$ORCH_PID" 2>/dev/null || true
+  [[ -n "${SYNTH_PID:-}" ]] && kill "$SYNTH_PID" 2>/dev/null || true
   wait 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -56,7 +58,7 @@ sys.exit(0 if ($expr) else 1)
 # A process left over from manual testing will silently serve these requests and
 # make the teardown assertions lie — "worker down" passes as 200 because a
 # different worker answered. Fail fast instead.
-for port in 5066 "$WORKER_PORT"; do
+for port in 5066 8080 "$WORKER_PORT"; do
   if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
     echo "port $port is already in use — stop the stray process first:" >&2
     lsof -nP -iTCP:"$port" -sTCP:LISTEN >&2
@@ -72,6 +74,10 @@ uv run python -m grpc_tools.protoc \
 echo "==> building orchestrator"
 dotnet build src/Orchestrator -v q --nologo >/dev/null
 
+echo "==> starting synthetic upstream"
+(cd synthetic && go run . >/tmp/ih-synthetic.log 2>&1) &
+SYNTH_PID=$!
+
 echo "==> starting worker"
 uv run python worker/server.py >/tmp/ih-worker.log 2>&1 &
 WORKER_PID=$!
@@ -82,6 +88,9 @@ ORCH_PID=$!
 
 curl -s --retry 40 --retry-all-errors --retry-delay 1 --max-time 90 \
   "$ORCH_URL/healthz" >/dev/null || { echo "orchestrator never came up"; tail -20 /tmp/ih-orch.log; exit 1; }
+curl -s --retry 40 --retry-all-errors --retry-delay 1 --max-time 90 \
+  "$SYNTH_URL/healthz" >/dev/null || { echo "synthetic never came up"; tail -20 /tmp/ih-synthetic.log; exit 1; }
+curl -s -X POST "$SYNTH_URL/_synth/reset" >/dev/null
 
 echo
 echo "==> health and registry"
@@ -100,6 +109,26 @@ assert_json "elevation — added as YAML only, never compiled against" \
   POST /integrations/open-meteo/resources/elevation/invoke \
   '{"latitude":"38.88","longitude":"-94.82"}' 200 \
   "d['count'] == 1 and isinstance(d['records'][0]['meters'], (int, float))"
+
+echo
+echo "==> deterministic upstream: same seed, same bytes"
+assert_json "synthetic.orders renames and flattens a nested payload" \
+  POST /integrations/synthetic/resources/orders/invoke '{"limit":"2"}' 200 \
+  "d['count'] == 2 and d['records'][0]['id'] == 'ord_00001' and d['records'][0]['lineCount'] >= 1"
+
+assert_json "synthetic.snapshot reaches through nesting" \
+  POST /integrations/synthetic/resources/snapshot/invoke '{"station":"KMCI"}' 200 \
+  "d['records'][0]['id'] == 'KMCI' and 'tempC' in d['records'][0]"
+
+echo
+echo "==> retries: the fault is armed in YAML, not in this script"
+assert_json "two upstream failures then success is RETRIED_SUCCESS" \
+  POST /integrations/synthetic-flaky/resources/orders/invoke '{}' 200 \
+  "d['attempts'] == 3 and d['outcome'] == 'RetriedSuccess' and d['count'] == 1"
+
+assert_json "a first-time success is not mislabelled as retried" \
+  POST /integrations/synthetic/resources/orders/invoke '{"limit":"1"}' 200 \
+  "d['attempts'] == 1 and d['outcome'] == 'Success'"
 
 echo
 echo "==> failures are reported, not swallowed"

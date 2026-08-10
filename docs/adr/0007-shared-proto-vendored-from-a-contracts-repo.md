@@ -47,6 +47,26 @@ rot unnoticed in the meantime.
 - Three copies of one file will look redundant to a reader who does not know why.
   The version marker and the check script are what make it legible.
 
+## When to revisit
+
+This is deliberately the homelab-pragmatic answer, not the best one. It is correct
+*now* because the contract changes rarely, every consumer is ours, and nothing about
+the split is urgent. Any of the following inverts that:
+
+- The proto changes more than about once a month, so drift stops being theoretical.
+- A consumer appears that we do not control, or that cannot run the drift check.
+- A breaking change ships unnoticed — one is enough evidence that detection is not
+  sufficient and prevention is needed.
+- More than four repos vendor the copy.
+
+At that point the answer is Buf, not per-language packages: it solves breaking-change
+detection, which is the failure this choice actually exposes us to.
+
+**Do not treat the split itself as urgent.** The monorepo blocks nothing today, and
+`synthetic` is already self-contained — own `go.mod`, own Dockerfile, own chart, no
+imports from the parent repo. Keeping it that way is what keeps the split cheap
+whenever it happens; doing the split early buys organisation, not capability.
+
 ## Alternatives rejected
 
 **Published per-language packages** (NuGet, PyPI, Go module). The textbook answer, and

@@ -96,7 +96,7 @@ if handler code migrates into the orchestrator — collapse this into one servic
 |---|---|---|
 | Orchestrator | .NET 10 (LTS) / ASP.NET Core, C# 14 | .NET 8 goes out of support Nov 2026 — starting a new repo on it in Aug 2026 would be stale on arrival. |
 | Persistence | Postgres 17, EF Core 10 + Npgsql, code-first migrations | Migrations are part of the C# signal. Single instance, no HA. |
-| Resiliency | `Microsoft.Extensions.Http.Resilience` (Polly v8 pipelines) | The current, idiomatic .NET answer. Not hand-rolled loops. |
+| Resiliency | Polly v8 (`Polly.Core`) | `Microsoft.Extensions.Http.Resilience` wraps `HttpClient`, and the orchestrator’s outbound call is gRPC — so the pipeline is built directly. Retry is driven by the worker’s `retryable` flag, not by exceptions. |
 | RPC | gRPC, `Grpc.AspNetCore` + `grpcio` | Protoc ships inside `Grpc.Tools` / `grpcio-tools`. No system protoc needed. |
 | Read API | HotChocolate 15 (GraphQL) | See §6. |
 | Worker | Python 3.13, `grpc.aio`, `httpx`, `jmespath` | **No FastAPI** — see below. |
